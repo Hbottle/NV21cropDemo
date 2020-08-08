@@ -2,12 +2,26 @@ package com.lake.nv21cropdemo.util;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.ImageFormat;
 import android.graphics.Matrix;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
+import android.os.Environment;
 import android.renderscript.Allocation;
 import android.renderscript.Element;
 import android.renderscript.RenderScript;
 import android.renderscript.ScriptIntrinsicYuvToRGB;
 import android.renderscript.Type;
+import android.util.Log;
+
+import java.io.BufferedOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.logging.Logger;
 
 public class NV21Utils {
     private RenderScript rs;
@@ -155,4 +169,117 @@ public class NV21Utils {
         }
         return nData;
     }
+
+    /**
+     * 任意裁剪YUV420SP格式，这种存储格式决定了 left, top, clipW, clipH 必须是偶数。
+     * 如果传进来的不是偶数，函数内部会处理成偶数，left、top会向右下或者左上偏移一个像素
+     * 显示的图像颜色不对，不是绿就是蓝。
+     * 裁剪的原理：
+     * 1. NV21(YUV420SP)的存储格式：先逐行存储Y，再交叉存储VU，Y的大小是width*height，VU的大小是 width*height/2；
+     * 2. 裁剪时，可以想象原始数据byte[] src是一个二维数据(顺序存放了而已)，长度是width，高度是height*3/2；
+     * 3. 需要裁剪的部分是(left,top), (left+clipW, top+clipH)，大小为(clipW*clipH*3/2)按照步长为width；
+     * 4. 新建一个byte[] data,一个for循环把Y复制到data，再一个for循环，把VU复制到data，裁剪完成。
+     * 效率：设备RK3399，从2160*3840的原始图像中，裁剪出1920*1920大概需要16447669-32777211ns(16-32ms)，均值应该在25ms左右
+     *
+     * @param src 原始数据
+     * @param width 原始图像的width
+     * @param height 原始图像height
+     * @param left 裁剪区域左上角的x
+     * @param top 裁剪区域左上角的y
+     * @param clipW 裁剪的宽度
+     * @param clipH 裁剪的高度
+     * @return 裁剪后的图像数据
+     */
+    public static byte[] clipNV212(byte[] src, int width, int height, int left, int top, int clipW, int clipH) {
+        // 目标区域取偶(YUV420SP要求图像高度是偶数)
+        long begin = System.nanoTime();
+        if (left % 2 == 1) {
+            left--;
+        }
+        if (top % 2 == 1) {
+            top--;
+        }
+        int bottom = top + clipH;
+        // 裁剪后的占用的大小
+        int size =  clipW * clipH * 3 / 2;
+        final byte[] data = new byte[size];
+        // 按照YUV420SP格式，复制Y
+        for (int i = top; i < bottom; i++) {
+            System.arraycopy(src, left + i * width, data, (i - top) * clipW, clipW);
+        }
+        // 按照YUV420SP格式，复制UV
+        int startH = height + top / 2;
+        int endH = height + bottom / 2;
+        for (int i = startH; i < endH; i++) {
+            System.arraycopy(src,
+                    left + i * width,
+                    data,
+                    (i - startH + clipH) * clipW,  // i - startH 容易理解，+ clipH 是在Y数据后面添加数据
+                    clipW);
+        }
+        long end = System.nanoTime();
+        Log.d("NV21Utils", "clip use: " + (end - begin) + "ns");
+        //final int cw = clipW;
+        //final int ch = clipH;
+        //ThreadPoolManager.getInstance().execute(() -> save(data, cw, ch));
+        return data;
+    }
+
+    private static int count = 0;
+
+    private static void save(byte[] bytes, int width, int height) {
+        YuvImage image = new YuvImage(bytes, ImageFormat.NV21, width, height, null);
+        ByteArrayOutputStream outputSteam = new ByteArrayOutputStream();
+        image.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), 70, outputSteam);
+        byte[] jpegData = outputSteam.toByteArray();
+
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = 1;
+        Bitmap bmp = BitmapFactory.decodeStream(new ByteArrayInputStream(jpegData), null, options);
+        try {
+            saveBitmapToFile(bmp, Environment.getExternalStorageDirectory().getAbsolutePath()
+                    + File.separator + "clip" + File.separator
+                    + "test" + (count++ % 50) + ".jpg");
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    private static File saveBitmapToFile(Bitmap bmp, String name) throws IOException {
+        BufferedOutputStream os = null;
+        File file = null;
+        try {
+            file = new File(name);
+            if (!new File(file.getParent()).exists()) {
+                new File(file.getParent()).mkdirs();
+            }
+            file.createNewFile();
+            os = new BufferedOutputStream(new FileOutputStream(file));
+            bmp.compress(Bitmap.CompressFormat.JPEG, 100, os);
+        } catch (IOException ex) {
+            ex.printStackTrace();
+            throw ex;
+        } finally {
+            if (os != null) {
+                try {
+                    os.close();
+                } catch (IOException ex) {
+                    Log.e("Cache", ex.getMessage());
+                }
+            }
+        }
+        return file;
+    }
+
+
+
 }
+
+
+
+
+
+
+
+
+

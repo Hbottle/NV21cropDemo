@@ -86,7 +86,7 @@ public class MainActivity extends BaseActivity implements ViewTreeObserver.OnGlo
                 if (nv21 != null && nv21.length == previewSize.width * previewSize.height * 3 / 2) {
                     int offsetW = previewSize.width / 4;
                     int offsetH = previewSize.height / 4;
-                    byte[] data = NV21Utils.clipMirrorNV21(nv21, previewSize.width, previewSize.height, offsetW, offsetH, offsetW * 2, offsetH * 2);
+                    byte[] data = NV21Utils.clipNV212(nv21, previewSize.width, previewSize.height, offsetW, offsetH, offsetW * 2, offsetH * 2);
                     Log.e(TAG, "onPreviewFrame: " + data.length);
                     previewView2.drawBitmap(data, offsetW * 2, offsetH * 2);
                 }
